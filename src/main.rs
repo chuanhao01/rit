@@ -1,14 +1,7 @@
-use std::{
-    collections::HashMap,
-    env,
-    fs::{create_dir, File},
-    io,
-    path::{Path, PathBuf},
-};
+use std::env::current_dir;
 
 use clap::{Parser, Subcommand};
-use configparser::ini::Ini;
-use homedir::get_my_home;
+use rit::Repository;
 
 #[derive(Debug, Parser)]
 #[command(name = "rit")]
@@ -26,5 +19,9 @@ enum Commands {
 fn main() {
     let args = Cli::parse();
 
-    println!("{:?}", args);
+    match args.command {
+        Commands::Init {} => {
+            Repository::init_worktree(current_dir().unwrap()).unwrap();
+        }
+    }
 }

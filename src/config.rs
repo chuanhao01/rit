@@ -68,3 +68,18 @@ impl CoreConfig {
         hm
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_to_ini() {
+        let config = Config::default();
+        let ini = config.to_ini();
+        assert_eq!(
+            ini.get("core", "repositoryformatversion"),
+            Some(String::from("0"))
+        );
+    }
+}
