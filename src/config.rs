@@ -4,11 +4,11 @@ use configparser::ini::Ini;
 use homedir::get_my_home;
 
 #[derive(Default)]
-struct Config {
+pub struct Config {
     core: CoreConfig,
 }
 impl Config {
-    fn from_ini(ini: Ini) -> Self {
+    pub fn from_ini(ini: Ini) -> Self {
         let mut config = Config::default();
         if let Some(ini_config) = ini.get_map() {
             if let Some(hashmap) = ini_config.get("core") {
@@ -16,6 +16,14 @@ impl Config {
             }
         };
         config
+    }
+    /// Creates a [configparser::ini::Ini] from the current Config
+    pub fn to_ini(&self) -> Ini {
+        let mut ini = Ini::new();
+        for (k, v) in self.core.to_hashmap() {
+            ini.set("core", k, Some(v));
+        }
+        ini
     }
     /// Helper method to get the user's system wide config, returns default if it fails to find it
     fn get_system_config() -> Self {
@@ -31,7 +39,7 @@ impl Config {
             Self::default()
         }
     }
-    fn merge(&self, other: &Self) -> Self {
+    pub fn merge(&self, other: &Self) -> Self {
         Self {
             core: other.core.clone(),
             ..*self
@@ -50,5 +58,13 @@ impl CoreConfig {
             config.repositoryformatversion = val.parse::<u8>().unwrap();
         }
         config
+    }
+    fn to_hashmap(&self) -> HashMap<&str, String> {
+        let mut hm = HashMap::new();
+        hm.insert(
+            "repositoryformatversion",
+            self.repositoryformatversion.to_string(),
+        );
+        hm
     }
 }
