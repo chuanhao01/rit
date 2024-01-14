@@ -50,12 +50,20 @@ impl Config {
 #[derive(Clone, Default)]
 struct CoreConfig {
     repositoryformatversion: u8,
+    filemode: bool,
+    bare: bool,
 }
 impl CoreConfig {
     fn from_hashmap(hashmap: HashMap<String, Option<String>>) -> Self {
         let mut config = Self::default();
         if let Some(Some(val)) = hashmap.get("repositoryformatversion") {
             config.repositoryformatversion = val.parse::<u8>().unwrap();
+        }
+        if let Some(Some(val)) = hashmap.get("filemode") {
+            config.filemode = val.parse::<bool>().unwrap();
+        }
+        if let Some(Some(val)) = hashmap.get("bare") {
+            config.bare = val.parse::<bool>().unwrap();
         }
         config
     }
@@ -65,6 +73,8 @@ impl CoreConfig {
             "repositoryformatversion",
             self.repositoryformatversion.to_string(),
         );
+        hm.insert("filemode", self.filemode.to_string());
+        hm.insert("bare", self.bare.to_string());
         hm
     }
 }
