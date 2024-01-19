@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -9,11 +9,15 @@ use configparser::ini::Ini;
 use crate::{create_dir, create_path, Config};
 
 pub struct Repository {
-    worktree: PathBuf,
-    gitdir: PathBuf,
+    pub worktree: PathBuf,
     config: Config,
 }
 impl Repository {
+    pub fn clean_worktree(worktree: PathBuf) -> Result<(), String> {
+        let gitdir = create_path(&worktree, vec![String::from(".rit")]);
+        remove_dir_all(gitdir).map_err(|e| format!("Unable to remove worktree, {}", e))?;
+        Ok(())
+    }
     pub fn init_worktree(worktree: PathBuf) -> Result<Self, String> {
         let gitdir = create_path(&worktree, vec![String::from(".rit")]);
         create_dir(&gitdir)?;
@@ -26,7 +30,7 @@ impl Repository {
         Self::create_config(&gitdir)?;
         Self::create_description(&gitdir)?;
 
-        Self::from_existing_folder(worktree)
+        Self::from_worktree_root(worktree)
     }
     fn create_head(gitdir: &Path) -> Result<(), String> {
         let mut path = gitdir.to_path_buf();
@@ -55,8 +59,8 @@ impl Repository {
             .map_err(|e| format!("Error writing to git description: {}", e))?;
         Ok(())
     }
-    pub fn from_existing_folder(worktree: PathBuf) -> Result<Self, String> {
-        let gitdir = create_path(&worktree, vec![String::from(".rit")]);
+    pub fn from_worktree_root(worktree_root: PathBuf) -> Result<Self, String> {
+        let gitdir = create_path(&worktree_root, vec![String::from(".rit")]);
 
         let mut gitconfig = gitdir.clone();
         gitconfig.push("config");
@@ -67,9 +71,21 @@ impl Repository {
         let repo_config = Config::from_ini(gitconfig_ini);
 
         Ok(Self {
-            worktree,
-            gitdir,
+            worktree: worktree_root,
             config: repo_config,
         })
+    }
+    pub fn find_worktree_root(current_dir: PathBuf) -> Option<Self> {
+        // TODO: Check if errors on the cannonicalize needs to be dealt
+        let mut current_dir = current_dir.canonicalize().unwrap();
+        while current_dir != PathBuf::from("/") {
+            let potential_worktree_root = create_path(&current_dir, vec![String::from(".rit")]);
+            if potential_worktree_root.exists() {
+                return Some(Self::from_worktree_root(current_dir).unwrap());
+            }
+            current_dir.push("../");
+            current_dir = current_dir.canonicalize().unwrap();
+        }
+        None
     }
 }
