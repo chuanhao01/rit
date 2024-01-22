@@ -15,7 +15,6 @@ struct Cli {
 enum Commands {
     Init {},
     Clean {},
-    testFind {},
 }
 
 fn main() {
@@ -27,17 +26,6 @@ fn main() {
         }
         Commands::Clean {} => {
             Repository::clean_worktree(current_dir().unwrap()).unwrap();
-        }
-        Commands::testFind {} => {
-            let a = Repository::find_worktree_root(current_dir().unwrap());
-            match a {
-                Some(a) => {
-                    println!("{:?}", a.worktree);
-                }
-                None => {
-                    println!("none");
-                }
-            }
         }
     }
 }

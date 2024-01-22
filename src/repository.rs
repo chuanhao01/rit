@@ -8,9 +8,11 @@ use configparser::ini::Ini;
 
 use crate::{create_dir, create_path, Config};
 
+/// When initializing the struct, you should use [Self::init_worktree] or [Self::find_worktree_root]
 pub struct Repository {
     pub worktree: PathBuf,
-    config: Config,
+    pub gitdir: PathBuf,
+    pub config: Config,
 }
 impl Repository {
     pub fn clean_worktree(worktree: PathBuf) -> Result<(), String> {
@@ -72,6 +74,7 @@ impl Repository {
 
         Ok(Self {
             worktree: worktree_root,
+            gitdir,
             config: repo_config,
         })
     }
