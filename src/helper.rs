@@ -24,15 +24,38 @@ pub fn create_dir(path: &Path) -> Result<(), String> {
 
 // TODO: Choice of picking between hashing algos
 // Because git itself is trying to migrate over to SHA-256 (SHA2)
-pub enum Object {
+pub enum ObjectHeaders {
     Commit,
     Tree,
     Tag,
     Blob,
 }
 #[allow(clippy::inherent_to_string)]
+impl ObjectHeaders {
+    fn from_string(s: &str) -> Self {
+        match s {
+            "commit" => Self::Commit,
+            "blob" => Self::Blob,
+            "tag" => Self::Tag,
+            "tree" => Self::Tree,
+            _ => panic!("Unknown object header used, {}", s),
+        }
+    }
+    fn to_string(&self) -> String {
+        match self {
+            Self::Commit => String::from("commit"),
+            Self::Blob => String::from("blob"),
+            Self::Tag => String::from("tag"),
+            Self::Tree => String::from("tree"),
+        }
+    }
+}
+pub struct Object {
+    pub header: ObjectHeaders,
+    pub data: Vec<u8>,
+}
 impl Object {
-    pub fn read_from_sha(repo: Repository, hash: String) -> Result<Option<()>, String> {
+    pub fn read_from_sha(repo: Repository, hash: String) -> Result<Self, String> {
         // TODO: hash should be computed by the object itself
         // Using SHA-1 for now
         // There have been talks to shift to SHA-2
@@ -73,21 +96,31 @@ impl Object {
 
         let header = String::from_utf8(header).unwrap();
         let length = String::from_utf8(length).unwrap();
-        let content = String::from_utf8(content).unwrap();
 
-        Ok(Some(()))
+        if length.parse::<usize>().unwrap() != content.len() {
+            return Err(format!(
+                "Conflicting lengths found, length: {}, content_length: {}",
+                length,
+                content.len()
+            ));
+        }
+
+        Ok(Self {
+            header: ObjectHeaders::from_string(&header),
+            data: content,
+        })
     }
-    pub fn write_to_repo(self, repo: Repository, data: Vec<u8>) -> Result<String, String> {
+    pub fn write_to_repo(self, repo: Repository) -> Result<String, String> {
         // TODO: Sha should not be return, should be owned by the object
         // TODO: data should also already be owned by the object
-        let header = self.to_string();
-        let content_length = data.len().to_string();
+        let header = self.header.to_string();
+        let content_length = self.data.len().to_string();
         let final_content = [
             header.as_bytes(),
             b"\x20",
             content_length.as_bytes(),
             b"\x00",
-            data.as_slice(),
+            self.data.as_slice(),
         ]
         .concat();
         // DANGER
@@ -139,14 +172,6 @@ impl Object {
             .write_all(&compressed_content)
             .map_err(|e| format!("Error writing encoded data to file: {}", e))?;
         Ok(encode(hash))
-    }
-    fn to_string(&self) -> String {
-        match self {
-            Self::Commit => String::from("commit"),
-            Self::Blob => String::from("blob"),
-            Self::Tag => String::from("tag"),
-            Self::Tree => String::from("tree"),
-        }
     }
 }
 
