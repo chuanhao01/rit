@@ -16,7 +16,10 @@ enum Commands {
     Init {},
     Clean {},
     TestWrite {},
-    TestRead {},
+    TestRead {
+        #[arg(long)]
+        hash: String,
+    },
 }
 
 fn main() {
@@ -29,13 +32,16 @@ fn main() {
         Commands::Clean {} => {
             Repository::clean_worktree(current_dir().unwrap()).unwrap();
         }
-        Commands::TestRead {} => {
+        Commands::TestRead { hash } => {
             let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+            Object::read_from_sha(repo, hash).unwrap();
         }
         Commands::TestWrite {} => {
             let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
             let data = b"hello world";
-            Object::write_to_repo(repo, data.to_ascii_lowercase(), String::from("commit")).unwrap();
+            let hash =
+                Object::write_to_repo(Object::Commit, repo, data.to_ascii_lowercase()).unwrap();
+            println!("{}", hash);
         }
     }
 }
