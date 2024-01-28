@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use clap::ValueEnum;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use hex::encode;
 use sha1::{Digest, Sha1};
@@ -24,6 +25,7 @@ pub fn create_dir(path: &Path) -> Result<(), String> {
 
 // TODO: Choice of picking between hashing algos
 // Because git itself is trying to migrate over to SHA-256 (SHA2)
+#[derive(Clone, Debug, ValueEnum)]
 pub enum ObjectHeaders {
     Commit,
     Tree,
@@ -49,12 +51,30 @@ impl ObjectHeaders {
             Self::Tree => String::from("tree"),
         }
     }
+    fn serialize(&self, data: Vec<u8>) -> Vec<u8> {
+        match self {
+            Self::Blob => data,
+            _ => data,
+        }
+    }
+    fn deserialize(&self, data: Vec<u8>) -> Vec<u8> {
+        match self {
+            Self::Blob => data,
+            _ => data,
+        }
+    }
 }
 pub struct Object {
     pub header: ObjectHeaders,
     pub data: Vec<u8>,
 }
 impl Object {
+    pub fn new(header: ObjectHeaders, data: Vec<u8>) -> Self {
+        Self {
+            header: header.clone(),
+            data: header.deserialize(data),
+        }
+    }
     pub fn read_from_sha(repo: Repository, hash: String) -> Result<Self, String> {
         // TODO: hash should be computed by the object itself
         // Using SHA-1 for now
@@ -105,14 +125,9 @@ impl Object {
             ));
         }
 
-        Ok(Self {
-            header: ObjectHeaders::from_string(&header),
-            data: content,
-        })
+        Ok(Self::new(ObjectHeaders::from_string(&header), content))
     }
-    pub fn write_to_repo(self, repo: Repository) -> Result<String, String> {
-        // TODO: Sha should not be return, should be owned by the object
-        // TODO: data should also already be owned by the object
+    pub fn calculate_hash(&self) -> Result<String, String> {
         let header = self.header.to_string();
         let content_length = self.data.len().to_string();
         let final_content = [
@@ -120,7 +135,7 @@ impl Object {
             b"\x20",
             content_length.as_bytes(),
             b"\x00",
-            self.data.as_slice(),
+            self.header.serialize(self.data.clone()).as_slice(),
         ]
         .concat();
         // DANGER
@@ -137,9 +152,23 @@ impl Object {
             .as_slice()
             .try_into()
             .expect("Wrong length");
+        Ok(encode(hash))
+    }
+    pub fn write_to_repo(&self, repo: Repository) -> Result<String, String> {
+        let header = self.header.to_string();
+        let content_length = self.data.len().to_string();
+        let final_content = [
+            header.as_bytes(),
+            b"\x20",
+            content_length.as_bytes(),
+            b"\x00",
+            self.header.serialize(self.data.clone()).as_slice(),
+        ]
+        .concat();
+        let hash: Vec<char> = self.calculate_hash()?.chars().collect();
 
-        let directory = encode(&hash[..1]);
-        let filename = encode(&hash[1..]);
+        let directory: String = hash[..2].iter().collect();
+        let filename: String = hash[2..].iter().collect();
         let object_directory = create_path(
             &repo.gitdir,
             vec![String::from("objects"), directory.clone()],
@@ -171,7 +200,7 @@ impl Object {
         object_file
             .write_all(&compressed_content)
             .map_err(|e| format!("Error writing encoded data to file: {}", e))?;
-        Ok(encode(hash))
+        Ok(hash.iter().collect::<String>())
     }
 }
 

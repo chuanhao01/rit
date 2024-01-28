@@ -1,6 +1,6 @@
-use std::env::current_dir;
+use std::{env::current_dir, fs::File, io::Read, path::PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use rit::{Object, ObjectHeaders, Repository};
 
 #[derive(Debug, Parser)]
@@ -15,10 +15,21 @@ struct Cli {
 enum Commands {
     Init {},
     Clean {},
-    TestWrite {},
-    TestRead {
-        #[arg(long)]
-        hash: String,
+    CatFile {
+        #[arg(short, long)]
+        _type: ObjectHeaders,
+        #[arg()]
+        object: String,
+    },
+    /// Computes the object hash and optionally creates a blob from a file
+    HashObject {
+        #[arg(short, long)]
+        _type: ObjectHeaders,
+        /// Actually writes the object into the database
+        #[arg(short, long, action)]
+        write: bool,
+        /// Read the object from path
+        path: PathBuf,
     },
 }
 
@@ -32,20 +43,25 @@ fn main() {
         Commands::Clean {} => {
             Repository::clean_worktree(current_dir().unwrap()).unwrap();
         }
-        Commands::TestRead { hash } => {
+        Commands::CatFile { object, _type } => {
+            let object_identifier = object;
             let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
-            let object = Object::read_from_sha(repo, hash).unwrap();
+            let object = Object::read_from_sha(repo, object_identifier).unwrap();
             println!("{:?}", object.data);
         }
-        Commands::TestWrite {} => {
-            let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
-            let data = b"hello world".to_ascii_lowercase();
-            let object = Object {
-                data,
-                header: ObjectHeaders::Commit,
+        Commands::HashObject { _type, write, path } => {
+            // TODO: Handle not passing in a valid path file?
+            let mut object_file = File::open(path).unwrap();
+            let mut raw_file_contents: Vec<u8> = Vec::new();
+            object_file.read_to_end(&mut raw_file_contents).unwrap();
+
+            let object = Object::new(_type, raw_file_contents);
+            let hash = if !write {
+                object.calculate_hash().unwrap()
+            } else {
+                let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+                object.write_to_repo(repo).unwrap()
             };
-            let hash = object.write_to_repo(repo).unwrap();
-            // Object::write_to_repo(Object::Commit, repo, data.to_ascii_lowercase()).unwrap();
             println!("{}", hash);
         }
     }
