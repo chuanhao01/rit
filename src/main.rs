@@ -1,7 +1,7 @@
 use std::{env::current_dir, fs::File, io::Read, path::PathBuf};
 
-use clap::{ArgAction, Parser, Subcommand};
-use rit::{Object, ObjectHeaders, Repository};
+use clap::{Parser, Subcommand};
+use rit::{Object, ObjectTypes, Repository};
 
 #[derive(Debug, Parser)]
 #[command(name = "rit")]
@@ -17,14 +17,14 @@ enum Commands {
     Clean {},
     CatFile {
         #[arg(short, long)]
-        _type: ObjectHeaders,
+        _type: ObjectTypes,
         #[arg()]
         object: String,
     },
     /// Computes the object hash and optionally creates a blob from a file
     HashObject {
         #[arg(short, long)]
-        _type: ObjectHeaders,
+        _type: ObjectTypes,
         /// Actually writes the object into the database
         #[arg(short, long, action)]
         write: bool,
@@ -47,7 +47,11 @@ fn main() {
             let object_identifier = object;
             let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
             let object = Object::read_from_sha(repo, object_identifier).unwrap();
-            println!("{:?}", object.data);
+            println!("{:?}", object.header.serialize());
+            println!(
+                "{:?}",
+                String::from_utf8(object.header.serialize()).unwrap()
+            );
         }
         Commands::HashObject { _type, write, path } => {
             // TODO: Handle not passing in a valid path file?

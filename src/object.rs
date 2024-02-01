@@ -1,66 +1,85 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{self, Read, Write},
 };
 
-use clap::ValueEnum;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use hex::encode;
+use itertools::Itertools;
 use sha1::{Digest, Sha1};
 
-use crate::create_path;
 use crate::Repository;
+use crate::{create_path, ObjectTypes};
 
 // TODO: Choice of picking between hashing algos
 // Because git itself is trying to migrate over to SHA-256 (SHA2)
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug)]
 pub enum ObjectHeaders {
-    Commit,
+    Commit {
+        fields: HashMap<String, String>,
+        message: String,
+    },
     Tree,
     Tag,
-    Blob,
+    Blob {
+        data: Vec<u8>,
+    },
 }
-#[allow(clippy::inherent_to_string)]
 impl ObjectHeaders {
-    fn from_string(s: &str) -> Self {
-        match s {
-            "commit" => Self::Commit,
-            "blob" => Self::Blob,
-            "tag" => Self::Tag,
-            "tree" => Self::Tree,
-            _ => panic!("Unknown object header used, {}", s),
+    pub fn serialize(&self) -> Vec<u8> {
+        match self {
+            Self::Blob { data } => data.clone(),
+            Self::Commit { fields, message } => {
+                let mut data: Vec<String> = Vec::new();
+                for key in fields.keys().sorted() {
+                    data.push(format!("{} {}", key, fields.get(key).unwrap()));
+                }
+                data.push(String::from(""));
+                data.push(message.to_owned());
+                data.join("\n").as_bytes().to_owned()
+            }
+            _ => Vec::new(),
         }
     }
-    fn to_string(&self) -> String {
-        match self {
-            Self::Commit => String::from("commit"),
-            Self::Blob => String::from("blob"),
-            Self::Tag => String::from("tag"),
-            Self::Tree => String::from("tree"),
-        }
-    }
-    fn serialize(&self, data: Vec<u8>) -> Vec<u8> {
-        match self {
-            Self::Blob => data,
-            _ => data,
-        }
-    }
-    fn deserialize(&self, data: Vec<u8>) -> Vec<u8> {
-        match self {
-            Self::Blob => data,
-            _ => data,
+    fn deserialize(object_type: ObjectTypes, data: Vec<u8>) -> Self {
+        match object_type {
+            ObjectTypes::Blob => Self::Blob { data },
+            ObjectTypes::Commit => {
+                let data = String::from_utf8(data).unwrap();
+                let lines_slice = data.split('\n').collect::<Vec<&str>>();
+                let mut fields: HashMap<String, String> = HashMap::new();
+                let mut start = 0;
+                while !lines_slice[start].is_empty() {
+                    // Extracts key and parses value
+                    let mut end = start + 1;
+                    let mut intial_line = lines_slice[start].splitn(2, ' ').peekable();
+                    let key = intial_line.next().unwrap();
+                    let mut value = vec![intial_line.next().unwrap()];
+                    while !lines_slice[end].is_empty() && lines_slice[end].starts_with(' ') {
+                        value.push(lines_slice[end].strip_prefix(' ').unwrap());
+                        end += 1;
+                    }
+                    fields.insert(key.to_owned(), value.join("\n"));
+                    start = end;
+                }
+                let message = lines_slice[start + 1..].join("\n");
+
+                Self::Commit { fields, message }
+            }
+            _ => Self::Tree,
         }
     }
 }
 pub struct Object {
     pub header: ObjectHeaders,
-    pub data: Vec<u8>,
+    pub _type: ObjectTypes,
 }
 impl Object {
-    pub fn new(header: ObjectHeaders, data: Vec<u8>) -> Self {
+    pub fn new(object_type: ObjectTypes, data: Vec<u8>) -> Self {
         Self {
-            header: header.clone(),
-            data: header.deserialize(data),
+            header: ObjectHeaders::deserialize(object_type.clone(), data),
+            _type: object_type,
         }
     }
     pub fn read_from_sha(repo: Repository, hash: String) -> Result<Self, String> {
@@ -113,17 +132,18 @@ impl Object {
             ));
         }
 
-        Ok(Self::new(ObjectHeaders::from_string(&header), content))
+        Ok(Self::new(ObjectTypes::from_string(&header), content))
     }
     pub fn calculate_hash(&self) -> Result<String, String> {
-        let header = self.header.to_string();
-        let content_length = self.data.len().to_string();
+        let header = self._type.to_string();
+        let data = self.header.serialize();
+        let content_length = data.len().to_string();
         let final_content = [
             header.as_bytes(),
             b"\x20",
             content_length.as_bytes(),
             b"\x00",
-            self.header.serialize(self.data.clone()).as_slice(),
+            data.as_slice(),
         ]
         .concat();
         // DANGER
@@ -143,14 +163,15 @@ impl Object {
         Ok(encode(hash))
     }
     pub fn write_to_repo(&self, repo: Repository) -> Result<String, String> {
-        let header = self.header.to_string();
-        let content_length = self.data.len().to_string();
+        let header = self._type.to_string();
+        let data = self.header.serialize();
+        let content_length = data.len().to_string();
         let final_content = [
             header.as_bytes(),
             b"\x20",
             content_length.as_bytes(),
             b"\x00",
-            self.header.serialize(self.data.clone()).as_slice(),
+            data.as_slice(),
         ]
         .concat();
         let hash: Vec<char> = self.calculate_hash()?.chars().collect();
@@ -194,6 +215,8 @@ impl Object {
 
 #[cfg(test)]
 mod test {
+    use hex::ToHex;
+
     use super::*;
 
     #[test]
@@ -210,5 +233,39 @@ mod test {
             filename,
             String::from("73d1b7eaa0aa01b5bc2442d570a765bdaae751")
         );
+    }
+
+    #[test]
+    fn test_deserialize_commit() {
+        let data = String::from(
+            "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147
+parent 206941306e8a8af65b66eaaaea388a7ae24d49a0
+author Thibault Polge <thibault@thb.lt> 1527025023 +0200
+committer Thibault Polge <thibault@thb.lt> 1527025044 +0200
+gpgsig -----BEGIN PGP SIGNATURE-----
+
+ iQIzBAABCAAdFiEExwXquOM8bWb4Q2zVGxM2FxoLkGQFAlsEjZQACgkQGxM2FxoL
+ kGQdcBAAqPP+ln4nGDd2gETXjvOpOxLzIMEw4A9gU6CzWzm+oB8mEIKyaH0UFIPh
+ rNUZ1j7/ZGFNeBDtT55LPdPIQw4KKlcf6kC8MPWP3qSu3xHqx12C5zyai2duFZUU
+ wqOt9iCFCscFQYqKs3xsHI+ncQb+PGjVZA8+jPw7nrPIkeSXQV2aZb1E68wa2YIL
+ 3eYgTUKz34cB6tAq9YwHnZpyPx8UJCZGkshpJmgtZ3mCbtQaO17LoihnqPn4UOMr
+ V75R/7FjSuPLS8NaZF4wfi52btXMSxO/u7GuoJkzJscP3p4qtwe6Rl9dc1XC8P7k
+ NIbGZ5Yg5cEPcfmhgXFOhQZkD0yxcJqBUcoFpnp2vu5XJl2E5I/quIyVxUXi6O6c
+ /obspcvace4wy8uO0bdVhc4nJ+Rla4InVSJaUaBeiHTW8kReSFYyMmDCzLjGIu1q
+ doU61OM3Zv1ptsLu3gUE6GU27iWYj2RWN3e3HE4Sbd89IFwLXNdSuM0ifDLZk7AQ
+ WBhRhipCCgZhkj9g2NEk7jRVslti1NdN5zoQLaJNqSwO1MtxTmJ15Ksk3QP6kfLB
+ Q52UWybBzpaP9HEd4XnR+HuQ4k2K0ns2KgNImsNvIyFwbpMUyUWLMPimaV1DWUXo
+ 5SBjDB/V/W2JBFR+XKHFJeFwYhj7DD/ocsGr4ZMx/lgc8rjIBkI=
+ =lgTX
+ -----END PGP SIGNATURE-----
+
+Create first draft",
+        )
+        .as_bytes()
+        .to_owned();
+        let object = ObjectHeaders::deserialize(ObjectTypes::Commit, data);
+        println!("{:?}", object);
+        println!("{:?}", object.serialize());
+        assert!(false);
     }
 }
