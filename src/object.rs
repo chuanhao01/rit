@@ -6,7 +6,6 @@ use std::{
 
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use hex::encode;
-use itertools::Itertools;
 use sha1::{Digest, Sha1};
 
 use crate::Repository;
@@ -17,7 +16,8 @@ use crate::{create_path, ObjectTypes};
 #[derive(Clone, Debug)]
 pub enum ObjectHeaders {
     Commit {
-        fields: HashMap<String, String>,
+        fields: HashMap<String, Vec<String>>,
+        order: Vec<String>,
         message: String,
     },
     Tree,
@@ -30,10 +30,16 @@ impl ObjectHeaders {
     pub fn serialize(&self) -> Vec<u8> {
         match self {
             Self::Blob { data } => data.clone(),
-            Self::Commit { fields, message } => {
+            Self::Commit {
+                fields,
+                order,
+                message,
+            } => {
                 let mut data: Vec<String> = Vec::new();
-                for key in fields.keys().sorted() {
-                    data.push(format!("{} {}", key, fields.get(key).unwrap()));
+                for key in order {
+                    for value in fields.get(key).unwrap() {
+                        data.push(format!("{} {}", key, value.replace('\n', "\n ")));
+                    }
                 }
                 data.push(String::from(""));
                 data.push(message.to_owned());
@@ -48,24 +54,37 @@ impl ObjectHeaders {
             ObjectTypes::Commit => {
                 let data = String::from_utf8(data).unwrap();
                 let lines_slice = data.split('\n').collect::<Vec<&str>>();
-                let mut fields: HashMap<String, String> = HashMap::new();
+                let mut fields: HashMap<String, Vec<String>> = HashMap::new();
+                let mut order: Vec<String> = Vec::new();
                 let mut start = 0;
                 while !lines_slice[start].is_empty() {
                     // Extracts key and parses value
                     let mut end = start + 1;
-                    let mut intial_line = lines_slice[start].splitn(2, ' ').peekable();
+                    let mut intial_line = lines_slice[start].splitn(2, ' ');
                     let key = intial_line.next().unwrap();
                     let mut value = vec![intial_line.next().unwrap()];
                     while !lines_slice[end].is_empty() && lines_slice[end].starts_with(' ') {
                         value.push(lines_slice[end].strip_prefix(' ').unwrap());
                         end += 1;
                     }
-                    fields.insert(key.to_owned(), value.join("\n"));
+                    let value = value.join("\n");
+                    let key = key.to_owned();
+                    fields
+                        .entry(key.clone())
+                        .and_modify(|values| values.push(value.clone()))
+                        .or_insert(vec![value]);
+                    if !order.contains(&key) {
+                        order.push(key.clone());
+                    }
                     start = end;
                 }
                 let message = lines_slice[start + 1..].join("\n");
 
-                Self::Commit { fields, message }
+                Self::Commit {
+                    fields,
+                    order,
+                    message,
+                }
             }
             _ => Self::Tree,
         }
