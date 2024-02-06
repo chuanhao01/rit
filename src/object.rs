@@ -101,7 +101,7 @@ impl Object {
             _type: object_type,
         }
     }
-    pub fn read_from_sha(repo: Repository, hash: String) -> Result<Self, String> {
+    pub fn read_from_sha(repo: &Repository, hash: String) -> Result<Self, String> {
         // TODO: hash should be computed by the object itself
         // Using SHA-1 for now
         // There have been talks to shift to SHA-2
@@ -181,7 +181,7 @@ impl Object {
             .expect("Wrong length");
         Ok(encode(hash))
     }
-    pub fn write_to_repo(&self, repo: Repository) -> Result<String, String> {
+    pub fn write_to_repo(&self, repo: &Repository) -> Result<String, String> {
         let header = self._type.to_string();
         let data = self.header.serialize();
         let content_length = data.len().to_string();
@@ -252,6 +252,12 @@ mod test {
             filename,
             String::from("73d1b7eaa0aa01b5bc2442d570a765bdaae751")
         );
+    }
+
+    #[test]
+    fn test_starts_with() {
+        assert!(" no".starts_with(' '));
+        assert!("no\n".starts_with(' '));
     }
 
     #[test]
