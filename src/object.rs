@@ -58,7 +58,21 @@ impl ObjectHeaders {
             }
             Self::Tree { entries } => {
                 let mut data: Vec<u8> = Vec::new();
-                for entry in entries {
+                for entry in entries.iter().sorted_by(|&a, &b| {
+                    let process_path = |node: &TreeNode| -> String {
+                        if node.mode.starts_with("10") {
+                            node.path.clone()
+                        } else if node.mode.starts_with('4') {
+                            node.path.clone() + "\\"
+                        } else {
+                            panic!(
+                                "Sorting Tree entry that is not a file or directory, {:?}",
+                                node
+                            )
+                        }
+                    };
+                    process_path(a).cmp(&process_path(b))
+                }) {
                     data.append(&mut entry.mode.as_bytes().to_owned());
                     data.push(0x20);
                     data.append(&mut entry.path.as_bytes().to_owned());

@@ -1,5 +1,4 @@
 use std::{
-    fmt::Write,
     fs,
     path::{Path, PathBuf},
 };
