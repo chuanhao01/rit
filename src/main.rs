@@ -1,7 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
     env::current_dir,
-    fmt::format,
     fs::File,
     io::Read,
     path::PathBuf,
@@ -30,7 +29,7 @@ enum Commands {
     },
     /// Computes the object hash and optionally creates a blob from a file
     HashObject {
-        #[arg(short, long)]
+        #[arg()]
         _type: ObjectTypes,
         /// Actually writes the object into the database
         #[arg(short, long, action)]
@@ -62,11 +61,14 @@ fn main() {
             let object_identifier = object;
             let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
             let object = Object::read_from_sha(&repo, object_identifier).unwrap();
+            println!("{:?}", object.header);
             println!("{:?}", object.header.serialize());
-            println!(
-                "{:?}",
-                String::from_utf8(object.header.serialize()).unwrap()
-            );
+            // println!(
+            //     "{:?}",
+            //     String::from_utf8(object.header.serialize()).unwrap()
+            // );
+            // println!();
+            // println!("{}", String::from_utf8(object.header.serialize()).unwrap());
         }
         Commands::HashObject { _type, write, path } => {
             // TODO: Handle not passing in a valid path file?

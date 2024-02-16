@@ -2,14 +2,23 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, Read, Write},
+    vec,
 };
 
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-use hex::encode;
+use hex::{decode, encode};
+use itertools::Itertools;
 use sha1::{Digest, Sha1};
 
-use crate::Repository;
 use crate::{create_path, ObjectTypes};
+use crate::{hex_to_hex_byte, Repository};
+
+#[derive(Clone, Debug)]
+pub struct TreeNode {
+    mode: String,
+    path: String,
+    hash: String,
+}
 
 // TODO: Choice of picking between hashing algos
 // Because git itself is trying to migrate over to SHA-256 (SHA2)
@@ -20,7 +29,9 @@ pub enum ObjectHeaders {
         order: Vec<String>,
         message: String,
     },
-    Tree,
+    Tree {
+        entries: Vec<TreeNode>,
+    },
     Tag,
     Blob {
         data: Vec<u8>,
@@ -44,6 +55,18 @@ impl ObjectHeaders {
                 data.push(String::from(""));
                 data.push(message.to_owned());
                 data.join("\n").as_bytes().to_owned()
+            }
+            Self::Tree { entries } => {
+                let mut data: Vec<u8> = Vec::new();
+                for entry in entries {
+                    data.append(&mut entry.mode.as_bytes().to_owned());
+                    data.push(0x20);
+                    data.append(&mut entry.path.as_bytes().to_owned());
+                    data.push(0x00);
+                    // Should not error here as hash should have been generated
+                    data.append(&mut hex_to_hex_byte(&entry.hash).unwrap());
+                }
+                data
             }
             _ => Vec::new(),
         }
@@ -86,7 +109,24 @@ impl ObjectHeaders {
                     message,
                 }
             }
-            _ => Self::Tree,
+            ObjectTypes::Tree => {
+                let mut data = data.into_iter().peekable();
+                let mut entries: Vec<TreeNode> = Vec::new();
+                while data.peek().is_some() {
+                    let mode = String::from_utf8(
+                        data.by_ref().take_while(|&byte| byte != 0x20).collect_vec(),
+                    )
+                    .unwrap();
+                    let path = String::from_utf8(
+                        data.by_ref().take_while(|&byte| byte != 0x00).collect_vec(),
+                    )
+                    .unwrap();
+                    let hash = encode(data.by_ref().take(20).collect_vec());
+                    entries.push(TreeNode { mode, path, hash });
+                }
+                Self::Tree { entries }
+            }
+            _ => Self::Tag,
         }
     }
 }
@@ -120,9 +160,9 @@ impl Object {
             .read_to_end(&mut raw_file_contents)
             .map_err(|_| "Error zlib decode file contents")?;
         let mut header: Vec<u8> = Vec::new();
-        let header_delimiter = 0x20u8;
+        let header_delimiter = 0x20;
         let mut length: Vec<u8> = Vec::new();
-        let length_delimiter = 0x0u8;
+        let length_delimiter = 0x0;
         let mut raw_file_content_iter = raw_file_contents.into_iter().peekable();
         while raw_file_content_iter.peek().is_some() {
             let b = raw_file_content_iter.next().unwrap();
@@ -234,7 +274,6 @@ impl Object {
 
 #[cfg(test)]
 mod test {
-    use hex::ToHex;
 
     use super::*;
 
