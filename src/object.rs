@@ -6,19 +6,14 @@ use std::{
 };
 
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-use hex::{decode, encode};
-use itertools::Itertools;
+use hex::encode;
 use sha1::{Digest, Sha1};
 
 use crate::{create_path, ObjectTypes};
 use crate::{hex_to_hex_byte, Repository};
 
-#[derive(Clone, Debug)]
-pub struct TreeNode {
-    mode: String,
-    path: String,
-    hash: String,
-}
+mod tree;
+pub use tree::{TreeNode, TreeNodeType, TreeObject};
 
 // TODO: Choice of picking between hashing algos
 // Because git itself is trying to migrate over to SHA-256 (SHA2)
@@ -29,9 +24,7 @@ pub enum ObjectHeaders {
         order: Vec<String>,
         message: String,
     },
-    Tree {
-        entries: Vec<TreeNode>,
-    },
+    Tree(TreeObject),
     Tag,
     Blob {
         data: Vec<u8>,
@@ -56,23 +49,9 @@ impl ObjectHeaders {
                 data.push(message.to_owned());
                 data.join("\n").as_bytes().to_owned()
             }
-            Self::Tree { entries } => {
+            Self::Tree(tree) => {
                 let mut data: Vec<u8> = Vec::new();
-                for entry in entries.iter().sorted_by(|&a, &b| {
-                    let process_path = |node: &TreeNode| -> String {
-                        if node.mode.starts_with("10") {
-                            node.path.clone()
-                        } else if node.mode.starts_with('4') {
-                            node.path.clone() + "\\"
-                        } else {
-                            panic!(
-                                "Sorting Tree entry that is not a file or directory, {:?}",
-                                node
-                            )
-                        }
-                    };
-                    process_path(a).cmp(&process_path(b))
-                }) {
+                for entry in &tree.entries {
                     data.append(&mut entry.mode.as_bytes().to_owned());
                     data.push(0x20);
                     data.append(&mut entry.path.as_bytes().to_owned());
@@ -85,9 +64,9 @@ impl ObjectHeaders {
             _ => Vec::new(),
         }
     }
-    fn deserialize(object_type: ObjectTypes, data: Vec<u8>) -> Self {
+    fn deserialize(object_type: ObjectTypes, data: Vec<u8>) -> Result<Self, String> {
         match object_type {
-            ObjectTypes::Blob => Self::Blob { data },
+            ObjectTypes::Blob => Ok(Self::Blob { data }),
             ObjectTypes::Commit => {
                 let data = String::from_utf8(data).unwrap();
                 let lines_slice = data.split('\n').collect::<Vec<&str>>();
@@ -117,43 +96,28 @@ impl ObjectHeaders {
                 }
                 let message = lines_slice[start + 1..].join("\n");
 
-                Self::Commit {
+                Ok(Self::Commit {
                     fields,
                     order,
                     message,
-                }
+                })
             }
-            ObjectTypes::Tree => {
-                let mut data = data.into_iter().peekable();
-                let mut entries: Vec<TreeNode> = Vec::new();
-                while data.peek().is_some() {
-                    let mode = String::from_utf8(
-                        data.by_ref().take_while(|&byte| byte != 0x20).collect_vec(),
-                    )
-                    .unwrap();
-                    let path = String::from_utf8(
-                        data.by_ref().take_while(|&byte| byte != 0x00).collect_vec(),
-                    )
-                    .unwrap();
-                    let hash = encode(data.by_ref().take(20).collect_vec());
-                    entries.push(TreeNode { mode, path, hash });
-                }
-                Self::Tree { entries }
-            }
-            _ => Self::Tag,
+            ObjectTypes::Tree => Ok(Self::Tree(TreeObject::from_data(data)?)),
+            _ => Ok(Self::Tag),
         }
     }
 }
+#[derive(Debug)]
 pub struct Object {
     pub header: ObjectHeaders,
     pub _type: ObjectTypes,
 }
 impl Object {
-    pub fn new(object_type: ObjectTypes, data: Vec<u8>) -> Self {
-        Self {
-            header: ObjectHeaders::deserialize(object_type.clone(), data),
+    pub fn new(object_type: ObjectTypes, data: Vec<u8>) -> Result<Self, String> {
+        Ok(Self {
+            header: ObjectHeaders::deserialize(object_type.clone(), data)?,
             _type: object_type,
-        }
+        })
     }
     pub fn read_from_sha(repo: &Repository, hash: String) -> Result<Self, String> {
         // TODO: hash should be computed by the object itself
@@ -205,7 +169,7 @@ impl Object {
             ));
         }
 
-        Ok(Self::new(ObjectTypes::from_string(&header), content))
+        Self::new(ObjectTypes::from_string(&header), content)
     }
     pub fn calculate_hash(&self) -> Result<String, String> {
         let header = self._type.to_string();
@@ -341,7 +305,7 @@ Create first draft",
         )
         .as_bytes()
         .to_owned();
-        let object = ObjectHeaders::deserialize(ObjectTypes::Commit, data);
+        let object = ObjectHeaders::deserialize(ObjectTypes::Commit, data).unwrap();
         println!("{:?}", object);
         println!("{:?}", object.serialize());
         assert!(false);

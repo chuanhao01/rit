@@ -20,7 +20,7 @@ pub fn hex_to_hex_byte(s: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| {
             u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|e| format!("Failed to decode hexstr {}", s))
+                .map_err(|e| format!("Failed to decode hexstr {}, {}", s, e))
         })
         .collect()
 }
