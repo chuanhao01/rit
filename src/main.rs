@@ -8,7 +8,10 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
-use rit::{Object, ObjectHeaders, ObjectTypes, Repository, TreeNode, TreeNodeType, TreeObject};
+use rit::{
+    Object, ObjectHeaders, ObjectTypes, Repository, TreeNode, TreeNodeType, TreeObject,
+    GIT_DIR_PATH, RIT_DIR_PATH,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "rit")]
@@ -16,6 +19,8 @@ use rit::{Object, ObjectHeaders, ObjectTypes, Repository, TreeNode, TreeNodeType
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(short, long, action)]
+    git_dir: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -23,9 +28,9 @@ enum Commands {
     Init {},
     Clean {},
     CatFile {
-        #[arg(short, long)]
+        #[arg()]
         _type: ObjectTypes,
-        #[arg(id = "object")]
+        #[arg(id = "OBJECT")]
         hash: String,
     },
     /// Computes the object hash and optionally creates a blob from a file
@@ -53,20 +58,26 @@ enum Commands {
 
 fn main() {
     let args = Cli::parse();
+    let git_dir_path = if args.git_dir {
+        GIT_DIR_PATH
+    } else {
+        RIT_DIR_PATH
+    };
 
     match args.command {
         Commands::Init {} => {
-            Repository::init_worktree(current_dir().unwrap()).unwrap();
+            Repository::init_worktree(current_dir().unwrap(), git_dir_path).unwrap();
         }
         Commands::Clean {} => {
-            Repository::clean_worktree(current_dir().unwrap()).unwrap();
+            Repository::clean_worktree(current_dir().unwrap(), git_dir_path).unwrap();
         }
         Commands::CatFile {
             hash: object,
             _type,
         } => {
             let object_identifier = object;
-            let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
             let object = Object::read_from_sha(&repo, object_identifier).unwrap();
             println!("{:?}", object.header);
             println!("{:?}", object.header.serialize());
@@ -87,7 +98,8 @@ fn main() {
             let hash = if !write {
                 object.calculate_hash().unwrap()
             } else {
-                let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+                let repo =
+                    Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
                 object.write_to_repo(&repo).unwrap()
             };
             println!("{}", hash);
@@ -96,7 +108,8 @@ fn main() {
             // Only takes in full commit hashes for now
             // TODO:Convert the given hash value (As it can be in short form)
             // println!("DEBUG, {}", hash);
-            let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
             let mut commits_queue: VecDeque<String> = VecDeque::from([hash]);
             let mut commit_graphviz = String::from("digraph rit{\nnode[shape=rect]\n");
             let mut seen_hashes: HashSet<String> = HashSet::new();
@@ -143,7 +156,8 @@ fn main() {
             println!("{}", commit_graphviz);
         }
         Commands::LsTree { hash, recursive } => {
-            let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
             let tree = if let ObjectHeaders::Tree(tree) =
                 Object::read_from_sha(&repo, hash.clone()).unwrap().header
             {

@@ -15,13 +15,13 @@ pub struct Repository {
     pub config: Config,
 }
 impl Repository {
-    pub fn clean_worktree(worktree: PathBuf) -> Result<(), String> {
-        let gitdir = create_path(&worktree, vec![String::from(".rit")]);
+    pub fn clean_worktree(worktree: PathBuf, git_dir_path: &str) -> Result<(), String> {
+        let gitdir = create_path(&worktree, vec![git_dir_path.to_owned()]);
         remove_dir_all(gitdir).map_err(|e| format!("Unable to remove worktree, {}", e))?;
         Ok(())
     }
-    pub fn init_worktree(worktree: PathBuf) -> Result<Self, String> {
-        let gitdir = create_path(&worktree, vec![String::from(".rit")]);
+    pub fn init_worktree(worktree: PathBuf, git_dir_path: &str) -> Result<Self, String> {
+        let gitdir = create_path(&worktree, vec![git_dir_path.to_owned()]);
         create_dir(&gitdir)?;
         create_dir(&create_path(&gitdir, vec![String::from("objects")]))?;
         let refsdir = create_path(&gitdir, vec![String::from("refs")]);
@@ -32,7 +32,7 @@ impl Repository {
         Self::create_config(&gitdir)?;
         Self::create_description(&gitdir)?;
 
-        Self::from_worktree_root(worktree)
+        Self::from_worktree_root(worktree, git_dir_path)
     }
     fn create_head(gitdir: &Path) -> Result<(), String> {
         let mut path = gitdir.to_path_buf();
@@ -61,8 +61,8 @@ impl Repository {
             .map_err(|e| format!("Error writing to git description: {}", e))?;
         Ok(())
     }
-    pub fn from_worktree_root(worktree_root: PathBuf) -> Result<Self, String> {
-        let gitdir = create_path(&worktree_root, vec![String::from(".rit")]);
+    pub fn from_worktree_root(worktree_root: PathBuf, git_dir_path: &str) -> Result<Self, String> {
+        let gitdir = create_path(&worktree_root, vec![git_dir_path.to_owned()]);
 
         let mut gitconfig = gitdir.clone();
         gitconfig.push("config");
@@ -78,13 +78,13 @@ impl Repository {
             config: repo_config,
         })
     }
-    pub fn find_worktree_root(current_dir: PathBuf) -> Option<Self> {
+    pub fn find_worktree_root(current_dir: PathBuf, git_dir_path: &str) -> Option<Self> {
         // TODO: Check if errors on the cannonicalize needs to be dealt
         let mut current_dir = current_dir.canonicalize().unwrap();
         while current_dir != PathBuf::from("/") {
-            let potential_worktree_root = create_path(&current_dir, vec![String::from(".rit")]);
+            let potential_worktree_root = create_path(&current_dir, vec![git_dir_path.to_owned()]);
             if potential_worktree_root.exists() {
-                return Some(Self::from_worktree_root(current_dir).unwrap());
+                return Some(Self::from_worktree_root(current_dir, git_dir_path).unwrap());
             }
             current_dir.push("../");
             current_dir = current_dir.canonicalize().unwrap();
