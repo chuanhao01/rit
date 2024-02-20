@@ -1,16 +1,16 @@
 use std::{
     collections::{HashSet, VecDeque},
     env::current_dir,
-    fs::File,
-    io::Read,
-    path::PathBuf,
+    fs::{remove_dir_all, File},
+    io::{ErrorKind, Read, Write},
+    path::{Path, PathBuf},
 };
 
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
 use rit::{
-    Object, ObjectHeaders, ObjectTypes, Repository, TreeNode, TreeNodeType, TreeObject,
-    GIT_DIR_PATH, RIT_DIR_PATH,
+    create_dir, create_path, Object, ObjectHeaders, ObjectTypes, Repository, TreeNode,
+    TreeNodeType, TreeObject, GIT_DIR_PATH, RIT_DIR_PATH,
 };
 
 #[derive(Debug, Parser)]
@@ -45,7 +45,7 @@ enum Commands {
     },
     Log {
         // Hash of commit to start at
-        #[arg(id = "commit", default_value = "HEAD")]
+        #[arg(id = "COMMIT")]
         hash: String,
     },
     LsTree {
@@ -53,6 +53,15 @@ enum Commands {
         hash: String,
         #[arg(short, long, action)]
         recursive: bool,
+    },
+    Checkout {
+        #[arg(id = "COMMIT")]
+        hash: String,
+        #[arg()]
+        /// Directory to checkout in
+        path: PathBuf,
+        #[arg(short, long, action)]
+        _override: bool,
     },
 }
 
@@ -166,8 +175,9 @@ fn main() {
                 panic!("Expect hash to lead to a tree object, {}", hash)
             };
             let tree_nodes = if recursive {
-                fn recurse_tree(repo: &Repository, tree: TreeObject) -> Vec<TreeNode> {
-                    tree.entries
+                fn recurse_tree(repo: &Repository, cur_tree: TreeObject) -> Vec<TreeNode> {
+                    cur_tree
+                        .entries
                         .into_iter()
                         .map(|tree_node| {
                             if let TreeNodeType::Tree = &tree_node._type {
@@ -218,6 +228,94 @@ fn main() {
                     })
                     .join("\n")
             );
+        }
+        Commands::Checkout {
+            hash,
+            path,
+            _override,
+        } => {
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
+            let object = Object::read_from_sha(&repo, hash.clone()).unwrap();
+            let tree_hash = if let ObjectHeaders::Commit { fields, .. } = object.header {
+                fields.get("tree").unwrap_or_else(|| {
+                    panic!("Commit has no tree(hash) field, fields: {:?}", fields)
+                })[0]
+                    .to_owned()
+            } else {
+                panic!("Given hash, {}, is not a commit, {:?}", hash, object);
+            };
+            let tree = if let ObjectHeaders::Tree(tree) =
+                Object::read_from_sha(&repo, tree_hash.clone())
+                    .unwrap()
+                    .header
+            {
+                tree
+            } else {
+                panic!("Excepct hash to lead to a tree object, {}", tree_hash);
+            };
+
+            if _override {
+                if let Err(e) = remove_dir_all(path.clone()) {
+                    match e.kind() {
+                        ErrorKind::NotFound => {}
+                        _ => panic!("Unable to remove and override {:?}, {:?}", path.clone(), e),
+                    }
+                }
+            }
+            create_dir(&path).unwrap();
+
+            fn recurse_tree_checkout_blob(
+                repo: &Repository,
+                base_path: &Path,
+                cur_tree: TreeObject,
+            ) {
+                for cur_entry in &cur_tree.entries {
+                    match cur_entry._type {
+                        TreeNodeType::Blob => {
+                            let blob_contents = if let ObjectHeaders::Blob { data } =
+                                Object::read_from_sha(repo, cur_entry.hash.to_owned())
+                                    .unwrap()
+                                    .header
+                            {
+                                data
+                            } else {
+                                panic!("Expected blob from tree node, {:?}", cur_entry)
+                            };
+                            let blob_path = create_path(base_path, vec![cur_entry.path.to_owned()]);
+                            let mut blob_file = File::create(blob_path).unwrap();
+                            blob_file.write_all(&blob_contents).unwrap();
+                        }
+                        TreeNodeType::Tree => {
+                            let nested_tree_path =
+                                create_path(base_path, vec![cur_entry.path.clone()]);
+                            create_dir(&nested_tree_path).unwrap();
+                            let mut nested_tree = if let ObjectHeaders::Tree(tree) =
+                                Object::read_from_sha(repo, cur_entry.hash.clone())
+                                    .unwrap()
+                                    .header
+                            {
+                                tree
+                            } else {
+                                panic!("Excepct hash to lead to a tree object, {}", cur_entry.hash)
+                            };
+                            nested_tree.entries.iter_mut().for_each(|entry| {
+                                entry.path = [
+                                    cur_entry.path.clone(),
+                                    String::from("/"),
+                                    entry.path.clone(),
+                                ]
+                                .concat();
+                            });
+                            recurse_tree_checkout_blob(repo, base_path, nested_tree);
+                        }
+                        _ => {
+                            // Submodules and symbolic links are not implemented
+                        }
+                    }
+                }
+            }
+            recurse_tree_checkout_blob(&repo, &path, tree);
         }
     }
 }
