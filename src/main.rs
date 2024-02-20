@@ -7,7 +7,8 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use rit::{Object, ObjectHeaders, ObjectTypes, Repository};
+use itertools::Itertools;
+use rit::{Object, ObjectHeaders, ObjectTypes, Repository, TreeNode, TreeNodeType, TreeObject};
 
 #[derive(Debug, Parser)]
 #[command(name = "rit")]
@@ -41,6 +42,12 @@ enum Commands {
         // Hash of commit to start at
         #[arg(id = "commit", default_value = "HEAD")]
         hash: String,
+    },
+    LsTree {
+        #[arg(id = "tree-ish")]
+        hash: String,
+        #[arg(short, long, action)]
+        recursive: bool,
     },
 }
 
@@ -76,7 +83,7 @@ fn main() {
             let mut raw_file_contents: Vec<u8> = Vec::new();
             object_file.read_to_end(&mut raw_file_contents).unwrap();
 
-            let object = Object::new(_type, raw_file_contents);
+            let object = Object::new(_type, raw_file_contents).unwrap();
             let hash = if !write {
                 object.calculate_hash().unwrap()
             } else {
@@ -129,11 +136,74 @@ fn main() {
                         }
                     }
                 } else {
-                    panic!("Commit failed");
+                    panic!("Object parsed is not a commit, {:?}", commit);
                 };
             }
             commit_graphviz.push('}');
             println!("{}", commit_graphviz);
+        }
+        Commands::LsTree { hash, recursive } => {
+            let repo = Repository::find_worktree_root(current_dir().unwrap()).unwrap();
+            let tree = if let ObjectHeaders::Tree(tree) =
+                Object::read_from_sha(&repo, hash.clone()).unwrap().header
+            {
+                tree
+            } else {
+                panic!("Expect hash to lead to a tree object, {}", hash)
+            };
+            let tree_nodes = if recursive {
+                fn recurse_tree(repo: &Repository, tree: TreeObject) -> Vec<TreeNode> {
+                    tree.entries
+                        .into_iter()
+                        .map(|tree_node| {
+                            if let TreeNodeType::Tree = &tree_node._type {
+                                let mut tree = if let ObjectHeaders::Tree(tree) =
+                                    Object::read_from_sha(repo, tree_node.hash.clone())
+                                        .unwrap()
+                                        .header
+                                {
+                                    tree
+                                } else {
+                                    panic!(
+                                        "Excepct hash to lead to a tree object, {}",
+                                        tree_node.hash
+                                    )
+                                };
+                                tree.entries.iter_mut().for_each(|entry| {
+                                    entry.path = [
+                                        tree_node.clone().path,
+                                        String::from("/"),
+                                        entry.path.clone(),
+                                    ]
+                                    .concat();
+                                });
+                                recurse_tree(repo, tree)
+                            } else {
+                                vec![tree_node]
+                            }
+                        })
+                        .reduce(|mut acc, mut next| {
+                            acc.append(&mut next);
+                            acc
+                        })
+                        .unwrap()
+                }
+                recurse_tree(&repo, tree)
+            } else {
+                tree.entries.into_iter().collect::<Vec<TreeNode>>()
+            };
+            println!(
+                "{}",
+                tree_nodes
+                    .iter()
+                    .map(|tree_node| {
+                        format!(
+                            "{} {} {}\t{}",
+                            tree_node.mode, tree_node._type, tree_node.hash, tree_node.path
+                        )
+                    })
+                    .join("\n")
+            );
         }
     }
 }
