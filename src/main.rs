@@ -9,7 +9,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
 use rit::{
-    create_dir, create_path, Object, ObjectHeaders, ObjectTypes, Repository, TreeNode,
+    create_dir, create_path, resolve_ref, Object, ObjectHeaders, ObjectTypes, Repository, TreeNode,
     TreeNodeType, TreeObject, GIT_DIR_PATH, RIT_DIR_PATH,
 };
 
@@ -63,6 +63,7 @@ enum Commands {
         #[arg(short, long, action)]
         _override: bool,
     },
+    ShowRef {},
 }
 
 fn main() {
@@ -329,6 +330,34 @@ fn main() {
                 }
             }
             recurse_tree_checkout_blob(&repo, &path, "", tree);
+        }
+        Commands::ShowRef {} => {
+            use walkdir::WalkDir;
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
+            for path in [
+                vec![create_path(&repo.gitdir, vec![String::from("HEAD")])],
+                WalkDir::new(create_path(&repo.gitdir, vec![String::from("refs")]))
+                    .into_iter()
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.path().is_file())
+                    .map(|entry| entry.path().to_owned())
+                    .collect::<Vec<_>>(),
+            ]
+            .concat()
+            {
+                let _ref = resolve_ref(&repo, &path).unwrap();
+                println!(
+                    "{} {}",
+                    _ref,
+                    path.to_str()
+                        .unwrap()
+                        .strip_prefix(repo.gitdir.to_str().unwrap())
+                        .unwrap()
+                        .strip_prefix('/')
+                        .unwrap()
+                );
+            }
         }
     }
 }

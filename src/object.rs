@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, Read, Write},
+    path::Path,
     vec,
 };
 
@@ -247,6 +248,22 @@ impl Object {
             .write_all(&compressed_content)
             .map_err(|e| format!("Error writing encoded data to file: {}", e))?;
         Ok(hash.iter().collect::<String>())
+    }
+}
+
+pub fn resolve_ref(repo: &Repository, full_ref_path: &Path) -> Result<String, String> {
+    let mut ref_file = File::open(full_ref_path).unwrap();
+    let mut _ref = String::new();
+    ref_file.read_to_string(&mut _ref).unwrap();
+    _ref = _ref.strip_suffix('\n').unwrap().to_owned();
+    if _ref.starts_with("ref: ") {
+        let next_ref_path = _ref.strip_prefix("ref: ").unwrap();
+        resolve_ref(
+            repo,
+            &create_path(&repo.gitdir, vec![next_ref_path.to_owned()]),
+        )
+    } else {
+        Ok(_ref)
     }
 }
 
