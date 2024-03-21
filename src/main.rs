@@ -175,13 +175,17 @@ fn main() {
                 panic!("Expect hash to lead to a tree object, {}", hash)
             };
             let tree_nodes = if recursive {
-                fn recurse_tree(repo: &Repository, cur_tree: TreeObject) -> Vec<TreeNode> {
+                fn recurse_tree(
+                    repo: &Repository,
+                    base_path: &str,
+                    cur_tree: TreeObject,
+                ) -> Vec<(TreeNode, String)> {
                     cur_tree
                         .entries
                         .into_iter()
                         .map(|tree_node| {
                             if let TreeNodeType::Tree = &tree_node._type {
-                                let mut tree = if let ObjectHeaders::Tree(tree) =
+                                let tree = if let ObjectHeaders::Tree(tree) =
                                     Object::read_from_sha(repo, tree_node.hash.clone())
                                         .unwrap()
                                         .header
@@ -193,17 +197,14 @@ fn main() {
                                         tree_node.hash
                                     )
                                 };
-                                tree.entries.iter_mut().for_each(|entry| {
-                                    entry.path = [
-                                        tree_node.clone().path,
-                                        String::from("/"),
-                                        entry.path.clone(),
-                                    ]
-                                    .concat();
-                                });
-                                recurse_tree(repo, tree)
+                                // NOTE: since we start with "", "/" is added after the path to have old_dir/new_dir pattern
+                                recurse_tree(
+                                    repo,
+                                    &[base_path, &tree_node.path, "/"].concat(),
+                                    tree,
+                                )
                             } else {
-                                vec![tree_node]
+                                vec![(tree_node, base_path.to_owned())]
                             }
                         })
                         .reduce(|mut acc, mut next| {
@@ -212,18 +213,25 @@ fn main() {
                         })
                         .unwrap()
                 }
-                recurse_tree(&repo, tree)
+                recurse_tree(&repo, "", tree)
             } else {
-                tree.entries.into_iter().collect::<Vec<TreeNode>>()
+                tree.entries
+                    .into_iter()
+                    .map(|tree_node| (tree_node, String::from("")))
+                    .collect::<Vec<(TreeNode, String)>>()
             };
             println!(
                 "{}",
                 tree_nodes
                     .iter()
-                    .map(|tree_node| {
+                    .map(|(tree_node, base_path)| {
                         format!(
-                            "{} {} {}\t{}",
-                            tree_node.mode, tree_node._type, tree_node.hash, tree_node.path
+                            "{} {} {}\t{}{}",
+                            tree_node.mode,
+                            tree_node._type,
+                            tree_node.hash,
+                            base_path,
+                            tree_node.path
                         )
                     })
                     .join("\n")
@@ -267,7 +275,8 @@ fn main() {
 
             fn recurse_tree_checkout_blob(
                 repo: &Repository,
-                base_path: &Path,
+                checkout_path: &Path,
+                base_path: &str,
                 cur_tree: TreeObject,
             ) {
                 for cur_entry in &cur_tree.entries {
@@ -282,15 +291,21 @@ fn main() {
                             } else {
                                 panic!("Expected blob from tree node, {:?}", cur_entry)
                             };
-                            let blob_path = create_path(base_path, vec![cur_entry.path.to_owned()]);
+                            let blob_path = create_path(
+                                checkout_path,
+                                vec![base_path.to_owned(), cur_entry.path.to_owned()],
+                            );
+                            println!("{:?}", blob_path);
                             let mut blob_file = File::create(blob_path).unwrap();
                             blob_file.write_all(&blob_contents).unwrap();
                         }
                         TreeNodeType::Tree => {
-                            let nested_tree_path =
-                                create_path(base_path, vec![cur_entry.path.clone()]);
+                            let nested_tree_path = create_path(
+                                checkout_path,
+                                vec![base_path.to_owned(), cur_entry.path.to_owned()],
+                            );
                             create_dir(&nested_tree_path).unwrap();
-                            let mut nested_tree = if let ObjectHeaders::Tree(tree) =
+                            let nested_tree = if let ObjectHeaders::Tree(tree) =
                                 Object::read_from_sha(repo, cur_entry.hash.clone())
                                     .unwrap()
                                     .header
@@ -299,15 +314,13 @@ fn main() {
                             } else {
                                 panic!("Excepct hash to lead to a tree object, {}", cur_entry.hash)
                             };
-                            nested_tree.entries.iter_mut().for_each(|entry| {
-                                entry.path = [
-                                    cur_entry.path.clone(),
-                                    String::from("/"),
-                                    entry.path.clone(),
-                                ]
-                                .concat();
-                            });
-                            recurse_tree_checkout_blob(repo, base_path, nested_tree);
+                            // NOTE: since we start with "", "/" is added after the path to have old_dir/new_dir pattern
+                            recurse_tree_checkout_blob(
+                                repo,
+                                checkout_path,
+                                &[base_path, &cur_entry.path, "/"].concat(),
+                                nested_tree,
+                            );
                         }
                         _ => {
                             // Submodules and symbolic links are not implemented
@@ -315,7 +328,7 @@ fn main() {
                     }
                 }
             }
-            recurse_tree_checkout_blob(&repo, &path, tree);
+            recurse_tree_checkout_blob(&repo, &path, "", tree);
         }
     }
 }
