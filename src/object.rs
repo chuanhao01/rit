@@ -252,16 +252,18 @@ impl Object {
 }
 
 pub fn resolve_ref(repo: &Repository, full_ref_path: &Path) -> Result<String, String> {
-    let mut ref_file = File::open(full_ref_path).unwrap();
-    let mut _ref = String::new();
-    ref_file.read_to_string(&mut _ref).unwrap();
-    _ref = _ref.strip_suffix('\n').unwrap().to_owned();
+    let _ref = fs::read_to_string(full_ref_path)
+        .unwrap()
+        .strip_suffix('\n')
+        .unwrap()
+        .to_owned();
     if _ref.starts_with("ref: ") {
-        let next_ref_path = _ref.strip_prefix("ref: ").unwrap();
-        resolve_ref(
-            repo,
-            &create_path(&repo.gitdir, vec![next_ref_path.to_owned()]),
-        )
+        let next_ref = _ref.strip_prefix("ref: ").unwrap();
+        let next_ref_path = create_path(&repo.gitdir, vec![next_ref.to_owned()]);
+        if next_ref == "refs/heads/main" && !next_ref_path.exists() {
+            return Ok(String::from("Repo not initialized yet"));
+        }
+        resolve_ref(repo, &next_ref_path)
     } else {
         Ok(_ref)
     }

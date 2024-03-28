@@ -63,7 +63,15 @@ enum Commands {
         #[arg(short, long, action)]
         _override: bool,
     },
-    ShowRef {},
+    ShowRef {
+        #[arg(long)]
+        head: bool,
+    },
+    Tag {
+        // Creates a new tag object
+        #[arg(id = "a", short)]
+        annotate: bool,
+    },
 }
 
 fn main() {
@@ -331,21 +339,22 @@ fn main() {
             }
             recurse_tree_checkout_blob(&repo, &path, "", tree);
         }
-        Commands::ShowRef {} => {
+        Commands::ShowRef { head } => {
             use walkdir::WalkDir;
             let repo =
                 Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
-            for path in [
-                vec![create_path(&repo.gitdir, vec![String::from("HEAD")])],
-                WalkDir::new(create_path(&repo.gitdir, vec![String::from("refs")]))
-                    .into_iter()
-                    .filter_map(|entry| entry.ok())
-                    .filter(|entry| entry.path().is_file())
-                    .map(|entry| entry.path().to_owned())
-                    .collect::<Vec<_>>(),
-            ]
-            .concat()
-            {
+            let tags_not_in_refs = vec![create_path(&repo.gitdir, vec![String::from("HEAD")])];
+            let tags_in_refs = WalkDir::new(create_path(&repo.gitdir, vec![String::from("refs")]))
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_file())
+                .map(|entry| entry.path().to_owned())
+                .collect::<Vec<PathBuf>>();
+            for path in if head {
+                [tags_not_in_refs, tags_in_refs].concat()
+            } else {
+                tags_in_refs
+            } {
                 let _ref = resolve_ref(&repo, &path).unwrap();
                 println!(
                     "{} {}",
@@ -359,5 +368,6 @@ fn main() {
                 );
             }
         }
+        Commands::Tag { annotate } => {}
     }
 }
