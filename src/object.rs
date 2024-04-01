@@ -26,7 +26,11 @@ pub enum ObjectHeaders {
         message: String,
     },
     Tree(TreeObject),
-    Tag,
+    Tag {
+        fields: HashMap<String, Vec<String>>,
+        order: Vec<String>,
+        message: String,
+    },
     Blob {
         data: Vec<u8>,
     },
@@ -36,6 +40,11 @@ impl ObjectHeaders {
         match self {
             Self::Blob { data } => data.clone(),
             Self::Commit {
+                fields,
+                order,
+                message,
+            }
+            | Self::Tag {
                 fields,
                 order,
                 message,
@@ -68,7 +77,7 @@ impl ObjectHeaders {
     fn deserialize(object_type: ObjectTypes, data: Vec<u8>) -> Result<Self, String> {
         match object_type {
             ObjectTypes::Blob => Ok(Self::Blob { data }),
-            ObjectTypes::Commit => {
+            ObjectTypes::Commit | ObjectTypes::Tag => {
                 let data = String::from_utf8(data).unwrap();
                 let lines_slice = data.split('\n').collect::<Vec<&str>>();
                 let mut fields: HashMap<String, Vec<String>> = HashMap::new();
@@ -104,7 +113,6 @@ impl ObjectHeaders {
                 })
             }
             ObjectTypes::Tree => Ok(Self::Tree(TreeObject::from_data(data)?)),
-            _ => Ok(Self::Tag),
         }
     }
 }
@@ -267,6 +275,18 @@ pub fn resolve_ref(repo: &Repository, full_ref_path: &Path) -> Result<String, St
     } else {
         Ok(_ref)
     }
+}
+pub fn create_ref(repo: &Repository, name: String, hash: String) -> Result<(), String> {
+    // Check if the hash we are pointing to exists
+    let full_ref_path = create_path(
+        &repo.gitdir,
+        vec![String::from("refs"), String::from("tags"), name.clone()],
+    );
+    let mut ref_file =
+        File::create(full_ref_path).map_err(|e| format!("Error creating ref, {}: {}", &name, e))?;
+    ref_file
+        .write_all(hash.as_bytes())
+        .map_err(|e| format!("Failed to write into ref, {}: {}", &name, e))
 }
 
 #[cfg(test)]

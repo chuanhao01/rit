@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env::current_dir,
     fs::{remove_dir_all, File},
     io::{ErrorKind, Read, Write},
@@ -8,9 +8,10 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use itertools::Itertools;
+use regex::Regex;
 use rit::{
-    create_dir, create_path, resolve_ref, Object, ObjectHeaders, ObjectTypes, Repository, TreeNode,
-    TreeNodeType, TreeObject, GIT_DIR_PATH, RIT_DIR_PATH,
+    create_dir, create_path, create_ref, resolve_ref, Object, ObjectHeaders, ObjectTypes,
+    Repository, TreeNode, TreeNodeType, TreeObject, GIT_DIR_PATH, RIT_DIR_PATH,
 };
 
 #[derive(Debug, Parser)]
@@ -68,9 +69,17 @@ enum Commands {
         head: bool,
     },
     Tag {
-        // Creates a new tag object
+        /// Creates a new tag object
         #[arg(id = "a", short)]
         annotate: bool,
+        #[arg()]
+        name: String,
+        // The hash of the blob, commit or tree the tag refers to
+        #[arg(id = "OBJECT")]
+        hash: String,
+        /// Inclue a message with the tag, implies -a
+        #[arg(short, long)]
+        message: Option<String>,
     },
 }
 
@@ -368,6 +377,61 @@ fn main() {
                 );
             }
         }
-        Commands::Tag { annotate } => {}
+        Commands::Tag {
+            annotate,
+            name,
+            hash,
+            message,
+        } => {
+            let repo =
+                Repository::find_worktree_root(current_dir().unwrap(), git_dir_path).unwrap();
+            let tagged_object = Object::read_from_sha(&repo, hash.clone()).unwrap();
+            let name_regex = Regex::new(r"^[a-zA-Z0-9-_]+$").unwrap();
+            if !name_regex.is_match(&name) {
+                panic!("Please provide a valid name, {}", &name);
+            }
+            // TODO: Only hashing commit types
+            let hash = if annotate {
+                let fields = HashMap::from([
+                    (
+                        String::from("object"),
+                        vec![tagged_object.calculate_hash().unwrap()],
+                    ),
+                    (String::from("type"), vec![String::from("commit")]),
+                    (String::from("tag"), vec![name.clone()]),
+                    (
+                        String::from("tagger"),
+                        vec![format!(
+                            "{} <{}>",
+                            repo.config.user.name.clone(),
+                            repo.config.user.email.clone()
+                        )
+                        .to_string()],
+                    ),
+                ]);
+                let order = vec![
+                    String::from("object"),
+                    String::from("type"),
+                    String::from("tag"),
+                    String::from("tagger"),
+                ];
+                let message = match message {
+                    None => String::from(""),
+                    Some(m) => m,
+                };
+                let tag_object = Object {
+                    header: ObjectHeaders::Tag {
+                        fields,
+                        order,
+                        message,
+                    },
+                    _type: ObjectTypes::Tag,
+                };
+                tag_object.write_to_repo(&repo).unwrap()
+            } else {
+                hash
+            };
+            create_ref(&repo, name, hash).unwrap();
+        }
     }
 }
